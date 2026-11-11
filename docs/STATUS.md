@@ -1137,6 +1137,63 @@ Package revision 8 → 9 installation, launch/edit/preview, upgrade, reopening a
 removal are checked in the disposable VM. The profile and legacy Mail app are
 retained. See `package-v9-{build,lifecycle}.log` and the release manifest.
 
+## Permanent deletion from Trash
+
+2026-11-11 (airos-works/haiku#73: "Mail cannot delete emails in trash"). Delete
+on a message already in Trash queued another move to Trash, which did nothing;
+no command removed mail for good. Now, in a Trash view, Delete asks (default
+Cancel) and deletes the selected messages permanently, and **Message → Empty
+Trash…** does the same for the whole Trash. Only messages whose folder is
+Trash are affected; other messages of the same conversation stay.
+
+Storage (schema 16, `deleted_messages`, `src/core/DeleteStore.cpp`): the row
+hides its message from lists, conversations, search and counts in the same
+transaction. Mail without a server copy is removed at once. Otherwise the
+cached row stays as a record until the server copy is gone, so that a later
+check cannot download the message again:
+
+- IMAP and Proton Mail Bridge (`pending`): the next check runs `UID STORE
+  +FLAGS.SILENT (\Deleted)` and `UID EXPUNGE <uid>` for that UID, then removes
+  the cached message. A queued, not yet started move to Trash is dropped and
+  the message is removed where the server has it; a move that already started
+  finishes first and the removal then targets the destination. Without UIDPLUS
+  (or IMAP4rev2) the message stays marked `\Deleted` and hidden (`flagged`):
+  Mail does not send a plain EXPUNGE, as for moves and drafts, because it
+  would remove other clients' deleted mail. The record goes once a complete
+  mailbox listing no longer has the message. A dropped connection leaves the
+  journal row and its error for the next check; a tagged NO/BAD shows the
+  message again and reports why. A changed UIDVALIDITY cannot be repaired: the
+  stale record goes with the next listing and the server's message is
+  downloaded again under its new identity.
+- Gmail (`local`): the message is hidden here and stays in Gmail's Trash,
+  which Gmail empties after 30 days; the confirmation says so. The queued move
+  to Trash still reaches Gmail. `users.messages.delete` needs the restricted
+  `https://mail.google.com/` scope instead of `gmail.modify`; asking for it
+  would make every user sign in again and widens what the OAuth client must
+  be verified for, so the scope is unchanged. A message another client takes
+  out of Trash is shown again; once Gmail reports it gone the record is removed.
+- POP3 (`local`): the server always keeps its copy. The cached content is
+  blanked and the record kept until the server's UIDL list drops the message.
+
+Evidence: `ctest --test-dir build-host` passes all 22 suites with the address
+and undefined-behavior sanitizers ([log](evidence/delete-host.log));
+`mail_deletes` has 107 checks covering the store rules for local, Gmail, POP3
+and IMAP accounts, the schema-15 migration, and five IMAP scenarios over TLS
+against the stateful move fixture (through Trash, deleted before the queued
+move ran, no UIDPLUS, connection lost after STORE, connection lost after
+EXPUNGE), each reopening the database and reconnecting. The fixture asserts
+that only UID 1 was ever stored or expunged, no copy of deleted mail was made,
+and the unrelated message another client marked `\Deleted` survived. The same
+binary passes natively in a disposable air/OS VM (hrev60207+2447 image,
+[log](evidence/delete-native.log)); `mail_native_smoke` now ends by opening
+Trash, cancelling the confirmation, confirming it and finding Trash empty
+([log](evidence/delete-native-ui.log), run with `MAIL_PRIVATE_EMOJI=1` since
+its glyph check predates system color emoji). Its first step also waits for
+the reader instead of failing when the import's last refresh rebuilds the
+list. Package `airos_mail-0.1.0~dev1-10` builds from this tree. Not tested:
+live Gmail, Proton Bridge or third-party IMAP accounts, and deletion of very
+large Trash folders (one transaction, one alert).
+
 ## Follow-up enhancements and live validation
 
 Large-mailbox performance pass, 2026-10-27: profiling with a synthetic

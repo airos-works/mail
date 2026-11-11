@@ -82,8 +82,8 @@ Store::Store(const std::string& path)
         exec(db_, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
         Id currentVersion=0;
         { Statement version(db_, "PRAGMA user_version"); version.step(); currentVersion=version.number(0); }
-        require(currentVersion <= 15, "This mail database needs a newer version of Mail.");
-        if (currentVersion == 15) return;
+        require(currentVersion <= 16, "This mail database needs a newer version of Mail.");
+        if (currentVersion == 16) return;
         Transaction transaction(db_);
         if (currentVersion == 0) {
         exec(db_, R"SQL(
@@ -301,6 +301,16 @@ PRAGMA user_version=14;
 CREATE INDEX IF NOT EXISTS messages_list ON messages(thread_id,received,account_id,folder,unread,starred,snoozed_until,subject,sender);
 PRAGMA user_version=15;
 )SQL");
+        // Messages deleted permanently from Trash. The row hides its message
+        // at once; the message itself goes when its server copy is gone, so a
+        // later check cannot download it again. See DeleteStore.cpp.
+        exec(db_, R"SQL(
+CREATE TABLE IF NOT EXISTS deleted_messages (
+ message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK(state IN('pending','flagged','local')),
+ error TEXT NOT NULL DEFAULT '');
+PRAGMA user_version=16;
+)SQL");
         transaction.commit();
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
 }
@@ -422,12 +432,14 @@ void Store::reconcileMailbox(Id account,const MailboxSnapshot& snapshot,bool ret
         Statement hide(db_,"UPDATE remote_messages SET present=0 WHERE folder=? AND message_id IN(SELECT id FROM messages WHERE account_id=?)");
         hide.bind(1,snapshot.folder.id); hide.bind(2,account); hide.step();
     }
+    std::set<Id> listed;
     for (const auto& entry : snapshot.messages) {
         Statement find(db_,"SELECT id FROM messages WHERE account_id=? AND remote_key=?");
         find.bind(1,account); find.bind(2,entry.key); if (!find.step()) continue;
         Id id=find.number(0);
         Statement present(db_,"UPDATE remote_messages SET present=1,locator=? WHERE message_id=?");
         present.bind(1,entry.locator); present.bind(2,id); present.step();
+        listed.insert(id);
         if (retainMissing) continue; // POP3 has no shared read state or server folders.
         Statement flags(db_,R"SQL(UPDATE messages SET
  unread=CASE WHEN EXISTS(SELECT 1 FROM pending_changes WHERE message_id=?1 AND kind='read') THEN unread ELSE ?2 END,
@@ -436,6 +448,18 @@ void Store::reconcileMailbox(Id account,const MailboxSnapshot& snapshot,bool ret
  WHERE id=?1)SQL");
         flags.bind(1,id); flags.bind(2,entry.unread); flags.bind(3,entry.starred); flags.bind(4,snapshot.folder.localName()); flags.step();
     }
+    // A permanently deleted message leaves the cache once a complete listing
+    // no longer has it: expunged here or by another client, or dropped by a
+    // POP3 server. Until then its hidden row keeps it from being downloaded.
+    std::vector<Id> gone;
+    {
+        Statement deleted(db_,R"SQL(SELECT m.id FROM deleted_messages d JOIN messages m ON m.id=d.message_id
+ JOIN remote_messages r ON r.message_id=m.id WHERE m.account_id=? AND r.folder=?
+ AND NOT EXISTS(SELECT 1 FROM remote_moves WHERE message_id=m.id))SQL");
+        deleted.bind(1,account); deleted.bind(2,snapshot.folder.id);
+        while (deleted.step()) if (!listed.count(deleted.number(0))) gone.push_back(deleted.number(0));
+    }
+    for (Id id : gone) { Statement remove(db_,"DELETE FROM messages WHERE id=?"); remove.bind(1,id); remove.step(); }
     transaction.commit();
 }
 void Store::saveRemoteFolders(Id account,const std::vector<RemoteFolder>& folders)
@@ -466,7 +490,9 @@ std::vector<PendingChange> Store::pendingChanges(Id account)
     std::lock_guard<std::mutex> guard(mutex_);
     Statement s(db_,R"SQL(SELECT p.id,m.id,m.account_id,p.kind,p.value,r.folder,r.epoch,r.locator
 FROM pending_changes p JOIN messages m ON p.message_id=m.id JOIN remote_messages r ON r.message_id=m.id
-WHERE m.account_id=? ORDER BY p.id)SQL"); s.bind(1,account);
+WHERE m.account_id=?
+AND NOT EXISTS(SELECT 1 FROM deleted_messages d WHERE d.message_id=m.id AND d.state!='local')
+ORDER BY p.id)SQL"); s.bind(1,account);
     std::vector<PendingChange> changes;
     while (s.step()) changes.push_back({s.number(0),s.number(1),s.number(2),s.text(3),s.text(4),{s.text(5),s.text(6),s.text(7)}});
     return changes;
@@ -603,7 +629,7 @@ Message Store::message(Id id) { std::lock_guard<std::mutex> guard(mutex_); retur
 std::vector<Message> Store::thread(Id id)
 {
     std::lock_guard<std::mutex> guard(mutex_);
-    Statement s(db_, "SELECT id FROM messages WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM remote_messages r WHERE r.message_id=messages.id AND r.present=0) ORDER BY received,id"); s.bind(1, id);
+    Statement s(db_, "SELECT id FROM messages WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM remote_messages r WHERE r.message_id=messages.id AND r.present=0) AND NOT EXISTS(SELECT 1 FROM deleted_messages d WHERE d.message_id=messages.id) ORDER BY received,id"); s.bind(1, id);
     std::vector<Message> out;
     while (s.step()) out.push_back(readMessage(s.number(0)));
     return out;
@@ -631,6 +657,7 @@ std::string matchingSql(bool search, MatchingMode mode)
 FROM messages m JOIN accounts a ON a.id=m.account_id
 WHERE ((?1=0 AND a.unified=1) OR m.account_id=?1)
 AND NOT EXISTS(SELECT 1 FROM remote_messages r WHERE r.message_id=m.id AND r.present=0)
+AND NOT EXISTS(SELECT 1 FROM deleted_messages d WHERE d.message_id=m.id)
 AND (
  (?2='' AND folder NOT IN('trash','junk'))
  OR ((a.provider!=3 OR NOT EXISTS(SELECT 1 FROM remote_messages r WHERE r.message_id=m.id)) AND folder=?2)

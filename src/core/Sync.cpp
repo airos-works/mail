@@ -55,6 +55,27 @@ SyncReport syncAccount(Store& store,const Account& account,const std::string& pa
                 report.errors.emplace_back(error.what());
             }
         }
+        // Messages deleted from Trash: remove the server copy, then the cache.
+        for (const auto& pending:store.pendingDeletes(account.id)) {
+            checkCancelled();
+            try {
+                if (provider->remove(pending.location)) store.finishDelete(pending);
+                else store.flagDelete(pending);
+                ++report.applied;
+            } catch (const NetworkError& error) {
+                if (error.reason==NetworkFailure::Cancelled || error.reason==NetworkFailure::Connection) {
+                    store.recordDeleteError(pending,error.what()); throw;
+                }
+                if (error.reason==NetworkFailure::Rejected || error.reason==NetworkFailure::Unsupported) {
+                    // The server keeps the message, so it must not stay hidden.
+                    store.cancelDelete(pending);
+                    report.errors.emplace_back("“"+pending.subject+"” could not be deleted on the server and is shown again: "+error.what());
+                } else {
+                    store.recordDeleteError(pending,error.what());
+                    report.errors.emplace_back(std::string("Deleting a message: ")+error.what());
+                }
+            }
+        }
         std::set<Id> moving;
         for (const auto& pending:store.pendingMoves(account.id)) moving.insert(pending.change.message);
         auto pending=store.pendingChanges(account.id);

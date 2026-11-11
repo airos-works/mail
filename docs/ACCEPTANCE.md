@@ -23,7 +23,7 @@ a Desktop OAuth client; no real mailbox or external recipient was used.
 | Automatic filtering | Persistent ordered rules with native create/edit/reorder/disable/remove and provider mutation handling | Host organization tests, native organization fixture and Gmail receive fixture, recorded in [status](STATUS.md) |
 | Snoozed items | Presets/custom time, daylight-saving disambiguation, durable reminders, early wake, native notifications and restart recovery | Native snooze fixture and [notification capture](evidence/native-snooze-notification.png); host/native core checks |
 | Smart folders and tags | Saved combined queries; native management; account-scoped tags and synchronized Gmail labels | Organization storage/API/UI fixtures; [smart-folder](evidence/native-organization-smart.png) and [tag](evidence/native-organization-tags.png) captures |
-| Standard receive/read/compose/send/organize flow | Local autosave, reply/forward, private BCC, attachments, immutable Outbox, explicit uncertain-send recovery, Sent copies, archive, Trash and search | [Native workflow regression](evidence/mail-final-native.log), protocol/Google/Bridge deliveries, Outbox recovery fixture and package reopen checks |
+| Standard receive/read/compose/send/organize flow | Local autosave, reply/forward, private BCC, attachments, immutable Outbox, explicit uncertain-send recovery, Sent copies, archive, Trash, permanent deletion from Trash and search | [Native workflow regression](evidence/mail-final-native.log), protocol/Google/Bridge deliveries, Outbox recovery fixture and package reopen checks |
 
 ## Final qualification
 

@@ -65,7 +65,8 @@ enum : uint32 {
     kAccounts='macc', kCheckMail='mchk', kSyncProgress='msyp', kSyncDone='msyd',kDraftTick='mdtk',
     kCompose='mnew',kReply='mrpl',kReplyAll='mrpa',kForward='mfwd',kOutbox='mout',kSendDone='msdd',
     kAttachmentSelected='masl',kPreviewAttachment='mapr',kManageRules='mmrl',kManageSmart='mmsf',kManageTags='mmtg',kRemoveTag='mrtg',kFormatted='mfmt',
-    kToggleRead='mtrd',kPlainText='mplt',kMarkShownRead='mrdt',kMakeDefault='mdef'
+    kToggleRead='mtrd',kPlainText='mplt',kMarkShownRead='mrdt',kMakeDefault='mdef',
+    kDeleteForever='mdel',kEmptyTrash='memt'
 };
 Timestamp now() { return static_cast<Timestamp>(std::time(nullptr)); }
 void clear(BListView* list) { while (auto* item=list->RemoveItem(int32(0))) delete item; }
@@ -219,7 +220,8 @@ public:
     }
     Conversation conversation;
 };
-// Delete moves the selected conversations to Trash, as in other mail readers.
+// Delete moves the selected conversations to Trash, as in other mail readers;
+// in Trash it deletes them for good (see MailWindow::Apply).
 class ConversationListView : public BListView {
 public:
     ConversationListView() : BListView("conversations",B_MULTIPLE_SELECTION_LIST) {}
@@ -289,8 +291,9 @@ MailWindow::MailWindow(std::shared_ptr<Store> store,GoogleOptions google,std::st
     messages->AddItem(new BMenuItem("Open in new window",new BMessage(kFormatted),'P'));
     messages->AddSeparatorItem();
     messages->AddItem(new BMenuItem("Archive",new BMessage(kArchive),'E'));
-    messages->AddItem(new BMenuItem("Move to Trash",new BMessage(kTrash),'D'));
+    messages->AddItem(fTrashItem=new BMenuItem("Move to Trash",new BMessage(kTrash),'D'));
     messages->AddItem(new BMenuItem("Move to Inbox",new BMessage(kInbox)));
+    messages->AddItem(new BMenuItem("Empty Trash…",new BMessage(kEmptyTrash)));
     messages->AddSeparatorItem();
     messages->AddItem(new BMenuItem("Mark as read",new BMessage(kRead),'K'));
     messages->AddItem(new BMenuItem("Mark as unread",new BMessage(kUnread),'U'));
@@ -639,6 +642,11 @@ void MailWindow::UpdateActions()
     bool single=count==1 && item && item->conversation.id>0;
     for (auto what:{kReply,kReplyAll,kForward}) fActions[what]->SetEnabled(single);
     for (auto what:{kArchive,kTrash,kToggleRead,kStar,kSnooze}) fActions[what]->SetEnabled(received);
+    // In Trash, Delete removes messages for good.
+    const bool inTrash=fQuery.folder=="trash";
+    fTrashItem->SetLabel(inTrash?"Delete permanently…":"Move to Trash");
+    fActions[kTrash]->SetToolTip(inTrash?"Delete the selected conversations permanently (Delete)."
+        :"Move the selected conversations to Trash (Delete).");
     bool unread=false;
     for (int32 i=0,index;(index=fConversations->CurrentSelection(i))>=0;++i) unread|=static_cast<ConversationItem*>(fConversations->ItemAt(index))->conversation.unread>0;
     auto* toggle=fActions[kToggleRead];
@@ -844,14 +852,26 @@ void MailWindow::Apply(uint32 action)
         bool unread=false; for (Id id:ids) unread|=fStore->message(id).unread;
         action=unread?kRead:kUnread;
     }
+    if (action==kTrash && fQuery.folder=="trash") {
+        // Already in Trash: delete for good. Only the trashed messages of a
+        // conversation go; its other messages are not shown in this view.
+        std::vector<Id> trashed;
+        for (Id id:ids) if (fStore->message(id).folder=="trash") trashed.push_back(id);
+        if (trashed.empty() || !ConfirmDelete(trashed,false)) return;
+        ids=trashed; action=kDeleteForever;
+    }
     // Moving conversations out of the view selects the next one, as Tracker does.
     int32 next=-1;
-    if (action==kArchive || action==kTrash || action==kInbox) {
+    if (action==kArchive || action==kTrash || action==kInbox || action==kDeleteForever) {
         int32 last=-1; for (int32 i=0,index;(index=fConversations->CurrentSelection(i))>=0;++i) last=index;
         next=last+1;
     }
     bool starred=false; if (action==kStar) for (Id id:ids) starred|=fStore->message(id).starred;
-    for (Id id : ids) {
+    if (action==kDeleteForever) {
+        try { fStore->deletePermanently(ids); }
+        catch (const std::exception& error) { Error(error.what()); return; }
+        fStatus->SetText(ids.size()==1?"Message deleted.":"Messages deleted.");
+    } else for (Id id : ids) {
         switch (action) {
             case kArchive: fStore->move(id,"archive"); break;
             case kTrash: fStore->move(id,"trash"); break;
@@ -870,6 +890,40 @@ void MailWindow::Apply(uint32 action)
         fConversations->Select(i); fConversations->ScrollToSelection(); break;
     }
     ShowConversation();
+}
+/*! Asks before messages are deleted for good. \a whole: all of Trash. */
+bool MailWindow::ConfirmDelete(const std::vector<Id>& messages,bool whole)
+{
+    bool gmail=false,pop=false; std::map<Id,Provider> providers;
+    for (const auto& account:fStore->accounts()) providers[account.id]=account.provider;
+    for (Id id:messages) {
+        auto provider=providers[fStore->message(id).account];
+        gmail|=provider==Provider::Gmail; pop|=provider==Provider::Pop3;
+        if (gmail && pop) break;
+    }
+    std::string text=whole?"Delete all "+std::to_string(messages.size())+" messages in Trash permanently?"
+        :messages.size()==1?std::string("Delete this message permanently?")
+        :"Delete these "+std::to_string(messages.size())+" messages permanently?";
+    if (whole && messages.size()==1) text="Delete the message in Trash permanently?";
+    text+="\n\nThis cannot be undone.";
+    if (gmail) text+="\n\nGmail keeps deleted messages in its own Trash for up to 30 days before it removes them.";
+    if (pop) text+="\n\nPOP3 mail is deleted on this computer only; the server keeps its copy.";
+    auto* alert=new BAlert("Delete permanently",text.c_str(),"Cancel","Delete permanently",nullptr,
+        B_WIDTH_AS_USUAL,B_WARNING_ALERT);
+    alert->SetShortcut(0,B_ESCAPE); alert->SetDefaultButton(alert->ButtonAt(0));
+    return alert->Go()==1;
+}
+void MailWindow::EmptyTrash()
+{
+    // The Trash being shown, else the Trash of all accounts.
+    Id account=fQuery.folder=="trash"?fQuery.account:0;
+    auto messages=fStore->trashed(account);
+    if (messages.empty()) { fStatus->SetText("Trash is empty."); return; }
+    if (!ConfirmDelete(messages,true)) return;
+    try { fStore->deletePermanently(messages); }
+    catch (const std::exception& error) { Error(error.what()); return; }
+    fConversations->DeselectAll(); Refresh(); ShowConversation();
+    fStatus->SetText("Trash emptied.");
 }
 void MailWindow::RefreshReminders(bool notify)
 {
@@ -1173,6 +1227,7 @@ void MailWindow::MessageReceived(BMessage* message)
                 break;
             case kArchive: case kTrash: case kInbox: case kRead: case kUnread: case kToggleRead:
             case kStar: case kQuickSnooze: case kWake: Apply(message->what); break;
+            case kEmptyTrash: EmptyTrash(); break;
             case kTag: case kRemoveTag: {
                 const char* value=nullptr;
                 if (message->FindString("value",&value)==B_OK) {

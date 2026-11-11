@@ -340,6 +340,21 @@ public:
         ensure(location); requirePresent(location);
         command("UID STORE "+location.locator+(value?" +FLAGS.SILENT (":" -FLAGS.SILENT (")+(readFlag?"\\Seen)":"\\Flagged)"));
     }
+    bool remove(const RemoteLocation& location) override
+    {
+        ensure(location);
+        if (!present(location)) return true; // Another client already removed it.
+        command("UID STORE "+location.locator+" +FLAGS.SILENT (\\Deleted)");
+        if (capabilities_.count("UIDPLUS") || capabilities_.count("IMAP4REV2")) {
+            // Never EXPUNGE unrelated messages marked by another client.
+            try { command("UID EXPUNGE "+location.locator); }
+            catch (const NetworkError& error) {
+                // Some accounts may mark Deleted without permission to expunge.
+                if (error.reason!=NetworkFailure::Rejected) throw;
+            }
+        }
+        return !present(location);
+    }
     RemoteLocation move(const RemoteLocation& location, const RemoteFolder& target) override
     {
         auto plan=planMove(location,target);
@@ -705,6 +720,8 @@ SentCopyMode sentCopyMode(const Account& account)
     if (account.sentMode!=SentCopyMode::Automatic) return account.sentMode;
     return account.provider==Provider::ProtonBridge?SentCopyMode::Server:SentCopyMode::Upload;
 }
+bool MailProvider::remove(const RemoteLocation&)
+{ throw NetworkError(NetworkFailure::Unsupported,"This account cannot delete messages on the server."); }
 RemoteMove MailProvider::planMove(const RemoteLocation&,const RemoteFolder&)
 { throw NetworkError(NetworkFailure::Unsupported,"This account does not support server folder moves."); }
 RemoteLocation MailProvider::resumeMove(RemoteMove&,const std::string&,const std::function<void(const RemoteMove&)>&)

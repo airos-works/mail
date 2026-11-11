@@ -44,6 +44,8 @@ private:
     void OpenLink(const std::string& url);
     void Import(BMessage*);
     void Apply(uint32 action);
+    bool ConfirmDelete(const std::vector<Id>& messages,bool whole);
+    void EmptyTrash();
     void CheckMail(bool draftsOnly=false);
     void ShowSyncProgress(BMessage*);
     void SetBusy(bool busy);
@@ -78,6 +80,7 @@ private:
     BButton *fAttachmentPreview=nullptr,*fAttachmentSave=nullptr;
     BButton* fFormattedView=nullptr;
     BButton* fPlainButton=nullptr;
+    BMenuItem* fTrashItem=nullptr;
     std::map<uint32,BButton*> fActions;
     std::map<std::string,Id> fFormattedThreads;
     BMessenger fOutbox;

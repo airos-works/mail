@@ -1,0 +1,8 @@
+Delete scenario passed: delete_trash
+Delete scenario passed: delete_queued
+Delete scenario passed: delete_no_uidplus
+Delete scenario passed: store_disconnect
+Delete scenario passed: expunge_disconnect
+107 permanent deletion checks passed
+EXIT=0
+Delete server checks passed: targeted expunge only, no copies of deleted mail, unrelated deleted mail preserved.

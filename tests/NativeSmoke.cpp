@@ -2,6 +2,7 @@
 #include "MailWindow.h"
 #include "ComposerWindow.h"
 #include "Emoji.h"
+#include <Alert.h>
 #include <Application.h>
 #include <Autolock.h>
 #include <Button.h>
@@ -11,11 +12,14 @@
 #include <File.h>
 #include <IconUtils.h>
 #include <ListView.h>
+#include <MenuBar.h>
+#include <MenuItem.h>
 #include <MessageRunner.h>
 #include <Resources.h>
 #include <TextControl.h>
 #include <TextView.h>
 #include <Screen.h>
+#include <StringItem.h>
 #include <TranslatorRoster.h>
 #include <cstdio>
 #include <cstdlib>
@@ -89,6 +93,14 @@ public:
                 auto* reader=dynamic_cast<BTextView*>(fWindow->FindView("message reader"));
                 bool displayed=reader && std::string(reader->Text()).find("Hello from air/OS")!=std::string::npos
                     && std::string(reader->Text()).find("Latest conversation message")!=std::string::npos;
+                // The import's last refresh can rebuild the list after it was
+                // selected, and the web engine may still be starting: select
+                // again and wait.
+                if (!displayed && fTicks<100) {
+                    auto* rebuilt=dynamic_cast<BListView*>(fWindow->FindView("conversations"));
+                    if (rebuilt && rebuilt->CountItems()==1 && rebuilt->CurrentSelection()<0) rebuilt->Select(0);
+                    fWindow->Unlock(); return;
+                }
                 if (displayed) {
                     auto offset=std::string(reader->Text()).find("🎉"); BFont font; reader->GetFontAndColor(offset,&font);
                     bool glyph=false; font.GetHasGlyphs("🎉",1,&glyph,false);
@@ -178,12 +190,49 @@ public:
                 check(messages.size()==2,"delete preserves both recoverable messages");
                 for (const auto& m:messages) check(m.folder=="trash","delete applies to every member");
                 check(fStore->drafts().empty() && fStore->outbox().empty(),"reply and forward review did not queue any delivery");
-                result=0; std::puts("Native Mail smoke passed: HVIF, import, threading, layout, read, archive, search, Reply-To, reply-all, forward attachments, saved drafts and Trash");
+                // Open the Trash view: there, Delete removes mail for good.
+                BAutolock lock(fWindow);
+                auto* sidebar=dynamic_cast<BListView*>(fWindow->FindView("mailboxes")); check(sidebar,"sidebar exists");
+                int32 index=-1;
+                for (int32 i=0;i<sidebar->CountItems();++i)
+                    if (auto* item=dynamic_cast<BStringItem*>(sidebar->ItemAt(i))) if (std::string(item->Text())=="Trash") { index=i; break; }
+                check(index>=0,"sidebar lists Trash"); sidebar->Select(index); ++fStep;
+            } else if (fStep==14 || fStep==16) {
+                if (Alert()) return;
+                BAutolock lock(fWindow);
+                auto* list=dynamic_cast<BListView*>(fWindow->FindView("conversations"));
+                if (!list || list->CountItems()!=1) { check(fStep==14,"cancelling keeps the conversation in Trash"); return; }
+                auto* item=fWindow->KeyMenuBar()->FindItem('mtrs');
+                check(item && std::string(item->Label())=="Delete permanently…","the Trash view offers permanent deletion");
+                check(fStore->trashed(0).size()==2,"Trash still holds both messages");
+                list->Select(0); fWindow->PostMessage('mtrs'); ++fStep;
+            } else if (fStep==15 || fStep==17) {
+                auto* alert=Alert(); if (!alert) return;
+                BAutolock lock(alert);
+                check(std::string(alert->Title())=="Delete permanently","permanent deletion asks first");
+                check(alert->DefaultButton()==alert->ButtonAt(0) && std::string(alert->ButtonAt(0)->Label())=="Cancel","the confirmation defaults to Cancel");
+                auto text=std::string(alert->TextView()->Text());
+                check(text.find("Delete these 2 messages permanently?")!=std::string::npos && text.find("cannot be undone")!=std::string::npos
+                    && text.find("Gmail")==std::string::npos,"the confirmation names what is deleted");
+                alert->ButtonAt(fStep==15?0:1)->Invoke(); ++fStep;
+            } else if (fStep==18) {
+                if (Alert() || !fStore->trashed(0).empty()) return;
+                mail::Query trash; trash.folder="trash";
+                check(fStore->conversations(trash,2000000000).empty() && rows.empty(),"confirmed deletion empties Trash for good");
+                BAutolock lock(fWindow);
+                auto* list=dynamic_cast<BListView*>(fWindow->FindView("conversations"));
+                if (!list || list->CountItems()!=0) return;
+                result=0; std::puts("Native Mail smoke passed: HVIF, import, threading, layout, read, archive, search, Reply-To, reply-all, forward attachments, saved drafts, Trash and permanent deletion");
                 std::fflush(stdout); PostMessage(B_QUIT_REQUESTED);
             }
         } catch (const std::exception& error) { fail(error.what()); }
     }
 private:
+    BAlert* Alert()
+    {
+        for (int32 i=0;auto* window=WindowAt(i);++i) if (auto* alert=dynamic_cast<BAlert*>(window)) return alert;
+        return nullptr;
+    }
     mail::ui::ComposerWindow* Composer()
     {
         for (int32 i=0;auto* window=WindowAt(i);++i)

@@ -8,7 +8,7 @@ MAIL_VM_KEY=${MAIL_VM_KEY:-$MAIL_ROOT/../summit/.vm/airos-x86_64/id_ed25519}
 MAIL_VM_KNOWN_HOSTS=${MAIL_VM_KNOWN_HOSTS:-$MAIL_ROOT/.cache/vm/known_hosts}
 MAIL_BUILD=${MAIL_BUILD:-$MAIL_ROOT/build-haiku}
 MAIL_NATIVE_TEST=${MAIL_NATIVE_TEST:-mail_protocol_tests}
-case "$MAIL_NATIVE_TEST" in mail_protocol_tests|mail_move_tests|mail_imap_draft_tests|mail_native_accounts|mail_native_outbox|mail_sent_tests|mail_native_sent|mail_native_moves) ;; *) exit 2;; esac
+case "$MAIL_NATIVE_TEST" in mail_protocol_tests|mail_move_tests|mail_delete_tests|mail_imap_draft_tests|mail_native_accounts|mail_native_outbox|mail_sent_tests|mail_native_sent|mail_native_moves) ;; *) exit 2;; esac
 MAIL_SSH=(-i "$MAIL_VM_KEY" -o IdentitiesOnly=yes -o BatchMode=yes
     -o "UserKnownHostsFile=$MAIL_VM_KNOWN_HOSTS" -o ConnectTimeout=10)
 [[ $# == 8 ]] || exit 2

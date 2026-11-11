@@ -1,0 +1,15 @@
+      Start 15: mail_moves
+      Start 16: mail_deletes
+ 5/22 Test #16: mail_deletes .....................   Passed    9.87 sec
+16/22 Test  #4: mail_repair ......................***Skipped   0.09 sec
+22/22 Test #15: mail_moves .......................   Passed   31.33 sec
+100% tests passed, 0 tests failed out of 22
+Total Test time (real) =  31.34 sec
+	  4 - mail_repair (Skipped)
+Delete scenario passed: delete_trash
+Delete scenario passed: delete_queued
+Delete scenario passed: delete_no_uidplus
+Delete scenario passed: store_disconnect
+Delete scenario passed: expunge_disconnect
+107 permanent deletion checks passed
+Delete server checks passed: targeted expunge only, no copies of deleted mail, unrelated deleted mail preserved.

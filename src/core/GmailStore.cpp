@@ -170,6 +170,7 @@ Id Store::ingestGmailMessage(Id account, const GmailMessage& remote, Id acknowle
         }
     }
     replaceLabels(db_, id, labels);
+    if (!created) restoreGmailDeleted(id, labels);
     // A just-created message already stored exactly these flags, unless rules
     // queued edits or a label removal needs overlaying; re-ingesting metadata
     // must still reconcile through applyGmailPending below.
@@ -222,12 +223,26 @@ std::string Store::gmailHistory(Id account)
     std::lock_guard<std::mutex> guard(mutex_); Statement query(db_, "SELECT history FROM gmail_state WHERE account_id=?"); query.bind(1, account);
     return query.step() ? query.text(0) : "";
 }
+// Gmail keeps a message deleted here in its Trash for up to 30 days. Taken out
+// of Trash from another client meanwhile, it is wanted again: show it.
+void Store::restoreGmailDeleted(Id message, const std::set<std::string>& labels)
+{
+    if (labels.count("TRASH")) return;
+    Statement trashing(db_, "SELECT 1 FROM pending_changes WHERE message_id=? AND kind='move' AND value='trash'"); trashing.bind(1, message);
+    if (trashing.step()) return; // Our own move to Trash has not reached Gmail yet.
+    Statement restore(db_, "DELETE FROM deleted_messages WHERE message_id=? AND state='local'"); restore.bind(1, message); restore.step();
+}
 void Store::removeGmailMessageLocked(Id account, const std::string& remoteId)
 {
     identifier(remoteId);
     Statement find(db_, "SELECT m.id FROM messages m JOIN remote_messages r ON r.message_id=m.id WHERE m.account_id=? AND m.remote_key=? AND r.folder='gmail'");
     find.bind(1, account); find.bind(2, "gmail:" + remoteId); if (!find.step()) return;
     auto id = find.number(0);
+    Statement deleted(db_, "SELECT 1 FROM deleted_messages WHERE message_id=?"); deleted.bind(1, id);
+    if (deleted.step()) {
+        // Deleted here and now gone from Gmail too: nothing is left to keep.
+        Statement remove(db_, "DELETE FROM messages WHERE id=?"); remove.bind(1, id); remove.step(); return;
+    }
     Statement hide(db_, "UPDATE remote_messages SET present=0 WHERE message_id=?"); hide.bind(1, id); hide.step();
     Statement clear(db_, "DELETE FROM pending_changes WHERE message_id=?"); clear.bind(1, id); clear.step();
 }

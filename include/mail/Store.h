@@ -5,6 +5,7 @@
 #include "Compose.h"
 #include "Gmail.h"
 #include <mutex>
+#include <set>
 
 struct sqlite3;
 namespace mail {
@@ -22,6 +23,12 @@ struct PendingMove {
     bool active=false;
     Id revision=0;
     std::string error,subject,accountName;
+};
+// A message deleted from Trash whose server copy is still to be removed.
+struct PendingDelete {
+    Id message=0,account=0;
+    RemoteLocation location;
+    std::string state,error,subject;
 };
 struct LabelChange {
     Id id=0,account=0;
@@ -106,6 +113,17 @@ public:
     void setRead(Id message, bool read);
     void setStarred(Id message, bool starred);
     void move(Id message, const std::string& folder);
+    // Deletes messages in Trash for good and returns how many; messages
+    // anywhere else are left alone. They disappear at once. A server copy is
+    // removed by the next check (IMAP), or stays hidden here while the server
+    // keeps it (Gmail, POP3).
+    std::size_t deletePermanently(const std::vector<Id>& messages);
+    std::vector<Id> trashed(Id account); // Visible messages in Trash; 0 = unified accounts.
+    std::vector<PendingDelete> pendingDeletes(Id account); // IMAP removals still owed.
+    void finishDelete(const PendingDelete&);  // The server no longer has the message.
+    void flagDelete(const PendingDelete&);    // Marked \Deleted; another client or the server expunges it.
+    void cancelDelete(const PendingDelete&);  // The server refused: the message is shown again.
+    void recordDeleteError(const PendingDelete&,const std::string& error);
     void snooze(Id message, Timestamp until);
     void snooze(const std::vector<Id>& messages, Timestamp until);
     std::vector<SnoozeReminder> reminders(Timestamp now);
@@ -183,6 +201,8 @@ private:
     void applyGmailPending(Id message);
     void overlayLabelChanges(Id account);
     void removeGmailMessageLocked(Id,const std::string&);
+    bool deleteLocked(Id message);
+    void restoreGmailDeleted(Id message,const std::set<std::string>& labels);
     Draft readDraft(Id);
     Id saveDraftLocked(Draft&);
     Outgoing readOutgoing(Id,bool includeRaw=true);

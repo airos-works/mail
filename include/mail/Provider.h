@@ -70,6 +70,10 @@ public:
     virtual std::string fetch(const MailboxSnapshot&, const RemoteMessage&) = 0;
     virtual void setFlag(const RemoteLocation&, bool readFlag, bool value) = 0;
     virtual RemoteLocation move(const RemoteLocation&, const RemoteFolder&) = 0;
+    // Removes one message for good. True when the server no longer has it,
+    // false when it could only be marked \Deleted: without UIDPLUS a plain
+    // EXPUNGE would also remove other clients' deleted mail, so none is sent.
+    virtual bool remove(const RemoteLocation&);
     virtual RemoteMove planMove(const RemoteLocation&, const RemoteFolder&);
     virtual RemoteLocation resumeMove(RemoteMove&, const std::string& raw,
         const std::function<void(const RemoteMove&)>& checkpoint);

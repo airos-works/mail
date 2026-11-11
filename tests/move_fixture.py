@@ -39,7 +39,7 @@ class MoveHandler(Handler):
             if command == 'CAPABILITY':
                 scenario = self.username
                 capability = ('IMAP4rev2' if scenario == 'rev2' else 'IMAP4rev1 '+
-                              ('' if scenario in ('no_uidplus', 'queued_cancel') else 'UIDPLUS ')+
+                              ('' if scenario in ('no_uidplus', 'queued_cancel', 'delete_no_uidplus') else 'UIDPLUS ')+
                               ('MOVE' if scenario in ('atomic', 'move_disconnect', 'move_no_receipt') else ''))
                 self.send(f'* CAPABILITY {capability} AUTH=PLAIN SASL-IR\r\n{tag} OK capabilities\r\n')
             elif command.startswith('AUTHENTICATE PLAIN'):

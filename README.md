@@ -101,6 +101,20 @@ detailed test history and future enhancements.
   supplied. Out-of-order ancestors merge existing conversations.
 - Archive/trash/restore, read/unread, stars, tags, custom snooze times, saved search
   views, and rules for newly imported or received messages.
+- Permanent deletion from Trash. In a Trash view, **Delete** (the key, the
+  toolbar button, or **Message → Delete permanently…**) removes the selected
+  messages for good after a confirmation that defaults to Cancel;
+  **Message → Empty Trash…** removes everything in the Trash being shown, or
+  in every account's Trash from any other view. Messages disappear at once.
+  IMAP and Proton Mail Bridge messages are removed from the server by the next
+  mail check, with STORE `\Deleted` and a UID EXPUNGE of that one message; a
+  server without UIDPLUS keeps the message marked `\Deleted` (Mail never sends
+  a plain EXPUNGE, which would also remove other clients' deleted mail). Gmail
+  messages stay in Gmail's own Trash, which Gmail empties after 30 days:
+  deleting through the Gmail API needs the full `https://mail.google.com/`
+  access, more than the `gmail.modify` access Mail asks for. POP3 mail is
+  removed on this computer only. An interrupted removal is journaled and
+  finishes on a later check; one the server refuses puts the message back.
 - Snooze presets, validated local dates/times and an explicit choice for repeated
   daylight-saving hours. Durable reminders survive reopening Mail; a persistent
   count and native notifications lead to open, snooze again and dismiss actions.

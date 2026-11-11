@@ -1,0 +1,3 @@
+hrev60207+2447 Nov  3 2026 13:1
+Native Mail smoke passed: HVIF, import, threading, layout, read, archive, search, Reply-To, reply-all, forward attachments, saved drafts, Trash and permanent deletion
+EXIT=0
